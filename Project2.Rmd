@@ -151,9 +151,10 @@ summary(diff)
 session_indices <- which(diff>=120)
 spat_df$diff[2:nrow(spat_df)] <- diff
 ```
-
+ #  # # # 
 ```{r}
-table(diff) %>% sort(decreasing=T) %>% head() %>% prop.table()
+table(diff) %>% sort(decreasing=T) %>% head() %>% prop.table() 
+print("test")
 ```
 
 ```{r}
