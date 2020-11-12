@@ -9,6 +9,21 @@ output: pdf_document
 knitr::opts_knit$set(root.dir = '~/inh2102_project2')
 ```
 
+NOTE: The code to replicate this project is [here](https://github.com/inh2102/STAT-UN3105-Project-2) on GitHub.
+
+# Introduction
+
+The goal of this project is to use an individual's (in this case, Wayne's) raw GPS data from a mobile phone and use it to predict location at a time in a future week--ultimately in an attempt to "assassinate" them. This report will operate on the assumption that the best time and place at which to bomb the individual is the data point we can predict most "reliably"--that is, one that our final model can predict with the highest accuracy, or the lowest deviation between our model and where Wayne will be. Since we don't yet have the data where Wayne will be in the future, we will test our model against past data in order to model our best guess, and select times and locations that perform the best. 
+
+Important points that this report will examine and attempt to address are: 
+
+- uncertainty or inaccuracies in the raw data given (the GPS giving biased estimates for longitude or latitude, giving incorrect data about times or timezones).
+- the assumptions of the model this report will create, and the degree uncertainty associated with predictions. The final model will be highly imperfect, but represents a best guess.
+
+# Importing and Cleaning the Raw Data
+
+Even though the most important data is longitude, latitude, and timestamp, I keep the miscellaneous variables altitude, accuracy, bearing, and speed in case they will be useful later.
+
 ```{r, echo=FALSE,warning=FALSE}
 library(jsonlite)
 library(tidyverse)
@@ -47,6 +62,8 @@ for (i in list.files("gps")) {
 }
 ```
 
+The following code chunk does two things: cleans the timestamp using the Lubridate R package to make it more easily understandable in a regression and visualization context; and creates a "SpatialPointsDataFrame" with "projected" coordinates so that our geographic data can be manipulated to calculate based on meters. 
+
 ```{r}
 df$time <- paste0(substr(df$time,1,10)," ",substr(df$time,12,23))
 df$time <- as.POSIXct(df$time, "%Y-%m-%d %H:%M:%S",tz="GMT")
@@ -62,14 +79,18 @@ spat_df@data <- spat_df@data %>% mutate(time_long=df$time_long,accuracy=df$accur
 spat_df <- spTransform(spat_df,CRSobj = "+proj=utm +zone=12 +datum=WGS84")
 ```
 
+This is what the raw data looks like, with longitude on the X axis, latitude on the Y axis, and colors according to each day for which the raw data is labeled (assuming the default timezone GMT).
+
 ```{r}
 plot(spat_df$longitude,spat_df$latitude,col=factor(spat_df$day))
 ```
 
-```{r}
+```{r, echo=FALSE, include=FALSE}
 coordinates <- coordinates(spat_df)
 plot(coordinates)
 ```
+
+In order to visualize the data day-by-day and note any preliminary observations, I split the data by day and visualize. 
 
 ```{r}
 par(mfrow=c(2,5))
@@ -78,10 +99,22 @@ for (i in split(spat_df,spat_df$day)) {
 }
 ```
 
+Here are some preliminary thoughts:
+
+- Some of the days have more data points than others. Aug. 18 only has 90 data points, and thus appears much more sparse than the other days -- for example, the maximum is 712 data points on day Aug 27.
+- The path for each day is roughly the same -- meaning we don't have to deal with expressing probabilities for where Wayne will go or where he will leave from. The origin and destination is constant.
+- We will certainly have to deal with the problem of data inaccuracies, including suspected missing data (for example, that is evident on Aug. 22), as well as extra junk data we'll look at more closely on Aug. 31.
+
+# Exploring Trends
+
+Before building a predictive model, one interesting thing to explore is whether trends that are not present in the raw data influence the patterns in the data itself. First, we import pre-cleaned data from [Weather Underground](https://www.wunderground.com/hourly/us/mt/missoula/59801) and extract Missoula, MT hourly Farenheit temperature values for the timestamps given.
+
 ```{r}
 mt_weather <- readxl::read_excel("mt_weather.xlsx")
 mt_weather <- mt_weather %>% mutate(temperature = as.numeric(substr(temperature,1,3)))
 ```
+
+Since the temperature data is only hourly (while the GPS data is much more granular), we standardize both datasets so that they each contain a column with the day-hour indication, and join the two dataframes in a new one called "time" so that we can visualize temperature over the time period for the data:
 
 ```{r}
 mt_weather$time <- format(mt_weather$time,"%D-%H")
@@ -91,6 +124,21 @@ ggplot(time,aes(x=time,y=temperature)) +
   geom_point() +
   geom_smooth()
 ```
+Using a locally fitted smoother (with grey bands representing SE, or uncertainty), we can see that there are fluctuations in temperature over the time period -- it rises (during the morning) and drops at night, but over the entire time period, it goes down (as Montana transitions out of the summer).
+
+We can also quickly visualize whether there is an association between the given "speed" data (much of which is NA) and the temperature data: 
+
+```{r}
+ggplot(time,aes(x=temperature,y=speed)) + 
+  geom_point() + 
+  geom_smooth()
+speed_lm <- lm(data=time,speed~temperature)
+summary(speed_lm)
+```
+
+Note: as the speed data given is likely flawed, we will not here attempt to create a perfect regression model and control for the model performing better at certain values. Regardless, we can see that there is on average a modest but likely significant relationship between speed and temperature -- and on average, speed increases by 0.003 units (possibly m/s, but not given in the data) for each increase in Farenheit temperature.
+
+It's probably worthwhile calculating our own speed given the coordinates and timestamps, but first we need to understand some properties of the data, including how frequent each data point is, and how the data can be divided into periods of collection and non-collection (stationary, or lack of movement by Wayne).
 
 ```{r sessions}
 diff_df <- df %>% arrange(-desc(time))
@@ -103,6 +151,7 @@ summary(diff)
 session_indices <- which(diff>=120)
 spat_df$diff[2:nrow(spat_df)] <- diff
 ```
+
 ```{r}
 table(diff) %>% sort(decreasing=T) %>% head() %>% prop.table()
 ```
@@ -110,6 +159,38 @@ table(diff) %>% sort(decreasing=T) %>% head() %>% prop.table()
 ```{r}
 plot(df$time,spat_df$longitude,col=df$day)
 abline(v=df$time[session_indices],col="red")
+```
+
+
+```{r}
+td <- as.numeric(diff(df$time), units="secs")
+gps_variance <- 20^2
+v_mat <-diag(c(gps_variance, gps_variance))
+f_mat <-matrix(c(1,0,0,0, 0,1,0,0), nrow=2, byrow = TRUE)
+dt <- median(td)
+g_mat <-matrix(c(1, 0, dt, 0,0, 1, 0, dt,0, 0, 1, 0,0, 0, 0, 1), byrow=TRUE, ncol=4)
+avg_walk_speed_m_per_sec <- median(df$speed,na.rm=TRUE)
+dlm_spec <-dlm(FF= f_mat,GG= g_mat,V = v_mat,W =diag(c(5, 5, 1, 1)^2),m0 =matrix(c(coordinates[1, ],rep(avg_walk_speed_m_per_sec/dt, 2)),ncol=1),
+        C0 =diag(rep(10^2, 4)))
+dlm_filter_mod <-dlmFilter(coordinates, dlm_spec)
+dlm_smooth_mod <-dlmSmooth(dlm_filter_mod)
+```
+
+```{r}
+plot(cbind(coordinates[1:100, ], dlm_filter_mod$m[2:101, 1:2], dlm_smooth_mod$s[2:101,1:2]),type='p', col =c("black", "red", "blue"), xlab="UTM X", ylab="UTM Y")
+legend("topright", col =c("black", "red", "blue"),pch = 1, legend =c("raw", "kalman filter","kalman smoother"))
+```
+
+```{r}
+speed <- sqrt(dlm_smooth_mod$s[, 3]^2+dlm_smooth_mod$s[, 4]^2)
+```
+
+```{r}
+time$kalman_speed <- speed[2:length(speed)]
+ggplot(time) + 
+  geom_point(aes(x=temperature,y=kalman_speed)) +
+  geom_smooth(aes(x=temperature,y=kalman_speed),method='lm')
+summary(lm(data=time,speed~temperature))
 ```
 
 ```{r}
@@ -169,37 +250,6 @@ points(spat_df[spat_df$session==1,]$longitude,spat_df[spat_df$session==1,]$latit
 # #predict(guess_time,se.fit=TRUE)
 # 
 # guess_day <- lm(data=spat_df,day~longitude+altitude+bearing+speed+latitude+time_long)
-```
-
-```{r}
-td <-as.numeric(diff(df$time), units="secs")
-gps_variance <- 20^2
-v_mat <-diag(c(gps_variance, gps_variance))
-f_mat <-matrix(c(1,0,0,0, 0,1,0,0), nrow=2, byrow = TRUE)
-dt <- median(td)
-g_mat <-matrix(c(1, 0, dt, 0,0, 1, 0, dt,0, 0, 1, 0,0, 0, 0, 1), byrow=TRUE, ncol=4)
-avg_walk_speed_m_per_sec <- median(df$speed,na.rm=TRUE)
-dlm_spec <-dlm(FF= f_mat,GG= g_mat,V = v_mat,W =diag(c(5, 5, 1, 1)^2),m0 =matrix(c(coordinates[1, ],rep(avg_walk_speed_m_per_sec/dt, 2)),ncol=1),
-        C0 =diag(rep(10^2, 4)))
-dlm_filter_mod <-dlmFilter(coordinates, dlm_spec)
-dlm_smooth_mod <-dlmSmooth(dlm_filter_mod)
-```
-
-```{r}
-plot(cbind(coordinates[1:100, ], dlm_filter_mod$m[2:101, 1:2], dlm_smooth_mod$s[2:101,1:2]),type='p', col =c("black", "red", "blue"), xlab="UTM X", ylab="UTM Y")
-legend("topright", col =c("black", "red", "blue"),pch = 1, legend =c("raw", "kalman filter","kalman smoother"))
-```
-
-```{r}
-speed <- sqrt(dlm_smooth_mod$s[, 3]^2+dlm_smooth_mod$s[, 4]^2)
-```
-
-```{r}
-time$kalman_speed <- speed[2:length(speed)]
-ggplot(time) + 
-  geom_point(aes(x=temperature,y=kalman_speed)) +
-  geom_smooth(aes(x=temperature,y=kalman_speed),method='lm')
-lm(data=time,speed~temperature)$coef[2]
 ```
 
 ```{r}
@@ -310,6 +360,13 @@ init <- tibble(longitude=spat_df$longitude[!duplicated(spat_df$day)],latitude=sp
                bearing=spat_df$bearing[!duplicated(spat_df$day)],speed=spat_df$speed[!duplicated(spat_df$day)],day=spat_df$day[!duplicated(spat_df$day)])      
 
 predict(newdata=init,object=guess_long)
+```
+
+```{r}
+training_indices <- sample(1:nrow(df),0.8*nrow(df))
+training <- df[training_indices,]
+testing <- df[-training_indices,]
+
 ```
 
 ```{r function}
