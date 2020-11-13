@@ -298,7 +298,7 @@ After removing unwanted data points and modeling the data using a "Kalman filter
 
 Before beginning to select a model, we must narrow our data to only those data points after the first 5 minutes of Wayne's travel:
 
-```{r}
+```{r, warning=FALSE}
 df$longitude <- spat_df@coords[,1]
 df$latitude <- spat_df@coords[,2]
 new_df <- data.frame()
@@ -372,42 +372,33 @@ summary(ols_time_resids); summary(gam_time_resids)
 
 Having created prediction algorithms, to select bomb locations, I choose the place where the prediction's error for longitude and latitude (their summed absolute value) is smallest. The prediction ends up performing best on 8/24 at 23:14:17, with a combined error of only 2.22 for UTM longitude and latitude. However, for this particular data, 7 days after 8/24 would correspond to 8/31, which isn't part of Week 3 -- so for Bomb 1 we'll choose the next best predicted value.
 
-```{r}
+```{r, warning=FALSE}
 errors <- bind_cols(long=as.vector(gam_long_resids),lat=as.vector(gam_lat_resids))
 
 errors$comb <- abs(errors$long)+abs(errors$lat)
 
 #which(errors$comb==min(errors$comb))
-#df[1862,]
-#errors[1862,]
+#df[2966,]
+#errors[2966,]
 
 #which(errors$comb==sort(errors$comb)[2])
-#df[3255,]
-#errors[3255,]
+#df[1721,]
+#errors[1721,]
 
 #which(errors$comb==sort(errors$comb)[3])
-#df[3330,]
-#errors[3330,]
+#df[4482,]
+#errors[1721,]
 ```
 
 # Bomb 1:
 
 ```{r}
-paste("Longitude:",gam_long_preds[which(errors$comb==sort(errors$comb)[2])])
-paste("Latitude:",gam_lat_preds[which(errors$comb==sort(errors$comb)[2])])
-paste("UNIX Time:",(86400*7)+gam_time_preds[which(errors$comb==sort(errors$comb)[2])])
+paste("Longitude:",gam_long_preds[which(errors$comb==min(errors$comb))])
+paste("Latitude:",gam_lat_preds[which(errors$comb==min(errors$comb))])
+paste("UNIX Time:",(86400*7)+gam_time_preds[which(errors$comb==min(errors$comb))])
 plot(df$longitude,df$latitude)
-points(gam_long_preds[which(errors$comb==sort(errors$comb)[2])],
-       gam_lat_preds[which(errors$comb==sort(errors$comb)[2])],cex=5,pch=4,col='red')
-```
-
-```{r}
-bomb1 <- df[which(errors$comb==sort(errors$comb)[2]),] %>% mutate(time = time+(86400*7)) 
-# Add constant to make this data point 7 days later.
-bomb1
-plot(df$longitude,df$latitude)
-points(df[which(errors$comb==sort(errors$comb)[2]),]$longitude,
-       df[which(errors$comb==sort(errors$comb)[2]),]$latitude,col='red',cex=5,pch=4)
+points(gam_long_preds[which(errors$comb==min(errors$comb))],
+       gam_lat_preds[which(errors$comb==min(errors$comb))],cex=5,pch=4,col='red')
 ```
 
 For the data already given, Bomb 1 would be placed on 8/26 at the above UTM coordinates. Given we're predicting for Week 3, I add 7 days to the timestamp and we arrive at **9/2/20 at the above UTM coordinates.**
@@ -415,12 +406,12 @@ For the data already given, Bomb 1 would be placed on 8/26 at the above UTM coor
 # Bomb 2: 
 
 ```{r}
-bomb2 <- df[which(errors$comb==sort(errors$comb)[3]),] %>% mutate(time = time+(86400*7))
-# Add constant to make this data point 7 days later.
-bomb2
-plot(df$longitude,df$latitude)
-points(df[which(errors$comb==sort(errors$comb)[3]),]$longitude,
-       df[which(errors$comb==sort(errors$comb)[3]),]$latitude,col='red',cex=5,pch=4)
+paste("Longitude:",gam_long_preds[which(errors$comb==sort(errors$comb)[3])])
+paste("Latitude:",gam_lat_preds[which(errors$comb==sort(errors$comb)[3])])
+paste("UNIX Time:",(86400*7)+gam_time_preds[which(errors$comb==sort(errors$comb)[3])])
+plot(cex=0.1,df$longitude,df$latitude)
+points(gam_long_preds[which(errors$comb==sort(errors$comb)[3])],
+       gam_lat_preds[which(errors$comb==sort(errors$comb)[3])],cex=5,pch=4,col='red')
 ```
 
 For the data already given, Bomb 2 would be placed on 8/27 at the above UTM coordinates. Given we're predicting for Week 3, I add 7 days to the timestamp and we arrive at **9/3/20 at the above UTM coordinates.**
