@@ -1,8 +1,8 @@
-## STAT-UN3105-Project-2
+# STAT-UN3105-Project-2
 
 Run the Project2.Rmd file to get started.
 
-# Packages required: 
+## Packages required: 
 
 - jsonlite
 - tidyverse
@@ -11,7 +11,7 @@ Run the Project2.Rmd file to get started.
 - **mgcv**
 - **lubridate**
 
-# Execution:
+## Execution:
 
 Lines 28 - 429 represent data cleaning, manipulation, exploration, and model building.
 
