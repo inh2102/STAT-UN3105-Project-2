@@ -188,6 +188,7 @@ Aug. 31 has extra data when Wayne is stationary (at work), so we need to move th
 ```{r}
 df <- df[-c(5352:5528),]
 spat_df <- spat_df[-c(5352:5528),]
+time <- time[-c(5352:5528),]
 aug31 <- spat_df[spat_df$time>"2020-08-31 00:00:00 GMT",]
 plot(aug31$time,aug31$longitude)
 abline(v=aug31$time[aug31$diff>120],col="red")
@@ -204,6 +205,7 @@ Aug. 26 contains data where Wayne goes somewhere in the complete opposition dire
 ```{r}
 df <- df[-c(3534:3620),]
 spat_df <- spat_df[-c(3534:3620),]
+time <- time[-c(3534:3620),]
 aug26 <- spat_df[spat_df$time>"2020-08-26 00:00:00 GMT"&spat_df$time<"2020-08-27 00:00:00 GMT",]
 plot(aug26$time,aug26$longitude)
 abline(v=aug26$time[aug26$diff>120],col="red")
@@ -249,16 +251,23 @@ v_mat <-diag(c(gps_variance, gps_variance))
 f_mat <-matrix(c(1,0,0,0, 0,1,0,0), nrow=2, byrow = TRUE)
 dt <- median(td)
 g_mat <-matrix(c(1, 0, dt, 0,0, 1, 0, dt,0, 0, 1, 0,0, 0, 0, 1), byrow=TRUE, ncol=4)
-avg_walk_speed_m_per_sec <- median(df$speed,na.rm=TRUE)
-dlm_spec <-dlm(FF= f_mat,GG= g_mat,V = v_mat,W =diag(c(5, 5, 1, 1)^2),
-               m0 =matrix(c(coordinates[1, ],rep(avg_walk_speed_m_per_sec/dt, 2)),ncol=1),
-               C0 =diag(rep(10^2, 4)))
-dlm_filter_mod <-dlmFilter(coordinates, dlm_spec)
+avg_walk_speed_m_per_sec <- median(df$speed,na.rm=TRUE) # Average time
+dlm_spec <-dlm(FF= f_mat,GG= g_mat,V= v_mat,W =diag(c(5, 5, 1, 1)^2),
+               m0= matrix(c(coordinates[1, ],rep(avg_walk_speed_m_per_sec/dt, 2)),ncol=1),
+               C0= diag(rep(10^2, 4)))
+dlm_filter_mod <-dlmFilter(coordinates(spat_df), dlm_spec)
 dlm_smooth_mod <-dlmSmooth(dlm_filter_mod)
 ```
 
 ```{r}
-plot(cbind(coordinates[1:nrow(coordinates), ], dlm_filter_mod$m[2:nrow(dlm_filter_mod$m), 1:2], dlm_smooth_mod$s[2:nrow(dlm_smooth_mod$s),1:2]),
+plot(cbind(coordinates(spat_df)[1:nrow(coordinates(spat_df)), ], dlm_filter_mod$m[2:nrow(dlm_filter_mod$m), 1:2], dlm_smooth_mod$s[2:nrow(dlm_smooth_mod$s),1:2]),
+     type='p', col =c("black", "red", "blue"), xlab="UTM X", ylab="UTM Y")
+legend("topright", col =c("black", "red", "blue"),pch = 1, 
+       legend =c("raw", "kalman filter","kalman smoother"))
+```
+
+```{r}
+plot(cbind(coordinates(spat_df)[1:100,], dlm_filter_mod$m[2:101, 1:2], dlm_smooth_mod$s[2:101,1:2]),
      type='p', col =c("black", "red", "blue"), xlab="UTM X", ylab="UTM Y")
 legend("topright", col =c("black", "red", "blue"),pch = 1, 
        legend =c("raw", "kalman filter","kalman smoother"))
