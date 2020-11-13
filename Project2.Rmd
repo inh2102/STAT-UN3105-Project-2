@@ -31,6 +31,7 @@ library(tidyverse)
 library(lubridate)
 library(sp)
 library(dlm)
+library(mgcv)
 
 df <- data.frame()
 for (i in list.files("gps")) {
@@ -140,12 +141,12 @@ We can also quickly visualize whether there is an association between the given 
 ```{r, warning=FALSE}
 ggplot(time,aes(x=temperature,y=speed)) + 
   geom_point() + 
-  geom_smooth()
+  geom_smooth(method='lm')
 speed_lm <- lm(data=time,speed~temperature)
 summary(speed_lm)
 ```
 
-Note: as the speed data given is likely flawed, we will not here attempt to create a perfect regression model and control for the model performing better at certain values. Regardless, we can see that there is on average a modest but likely significant relationship between speed and temperature -- and on average, speed increases by 0.003 units (possibly m/s, but not given in the data) for each increase in Farenheit temperature.
+Note: as the speed data given is likely flawed, we will not here attempt to create a perfect regression model and control for the model performing better at certain values. Regardless, we can see that there is on average a modest but likely significant relationship between speed and temperature -- and on average, speed decreases by 0.03 units (possibly m/s, but not given in the data) for each increase in Farenheit temperature.
 
 It's probably worthwhile calculating our own speed given the coordinates and timestamps, but first we need to understand some properties of the data, including how frequent each data point is, and how the data can be divided into periods of collection and non-collection (stationary, or lack of movement by Wayne).
 
@@ -242,7 +243,7 @@ points(spat_df[spat_df$session==1,]$longitude,spat_df[spat_df$session==1,]$latit
 
 In blue are the data points for the commute to work, and mirroring them are the red data points representing travel from work to home.
 
-Having examined the period between individual data points, defined "sessions" of activity, and removed sessions containing unwanted data, we can now get a better picture of the speed between the data points we're interested in. For this, we'll construct
+Having examined the period between individual data points, defined "sessions" of activity, and removed sessions containing unwanted data, we can now get a better picture of the speed between the data points we're interested in. For this, we'll construct a DLM (dynamic linear model) -- also known as a "Kalman filter," which uses uses what we know about our longitudinal data to create model our data by leveraging information we know about its uncertainties -- even produced a "smoothed" version that attempts to refine estimates.
 
 ```{r}
 td <- as.numeric(diff(df$time), units="secs")
@@ -259,6 +260,8 @@ dlm_filter_mod <-dlmFilter(coordinates(spat_df), dlm_spec)
 dlm_smooth_mod <-dlmSmooth(dlm_filter_mod)
 ```
 
+Below are the full raw data points, Kalman filter estimates, and Kalman smoother estimates.
+
 ```{r}
 plot(cbind(coordinates(spat_df)[1:nrow(coordinates(spat_df)), ], dlm_filter_mod$m[2:nrow(dlm_filter_mod$m), 1:2], dlm_smooth_mod$s[2:nrow(dlm_smooth_mod$s),1:2]),
      type='p', col =c("black", "red", "blue"), xlab="UTM X", ylab="UTM Y")
@@ -266,12 +269,16 @@ legend("topright", col =c("black", "red", "blue"),pch = 1,
        legend =c("raw", "kalman filter","kalman smoother"))
 ```
 
+To get a clearer view, we plot the first 100 observations of each:
+
 ```{r}
 plot(cbind(coordinates(spat_df)[1:100,], dlm_filter_mod$m[2:101, 1:2], dlm_smooth_mod$s[2:101,1:2]),
      type='p', col =c("black", "red", "blue"), xlab="UTM X", ylab="UTM Y")
 legend("topright", col =c("black", "red", "blue"),pch = 1, 
        legend =c("raw", "kalman filter","kalman smoother"))
 ```
+
+To calculate speed, we use the following equation:
 
 ```{r}
 speed <- sqrt(dlm_smooth_mod$s[, 3]^2+dlm_smooth_mod$s[, 4]^2)
@@ -285,147 +292,292 @@ ggplot(time) +
 summary(lm(data=time,kalman_speed~temperature))
 ```
 
-```{r}
-# guess_long1 <- lm(data=spat_df,longitude~(latitude+time_long+altitude+bearing+speed)^2)
-# #step(guess_long,direction='backward')
-# guess_long <- lm(data=spat_df,longitude~sin(latitude+altitude+speed+time_long+latitude*altitude))
-# #summary(guess_long)
-# #predict(guess_long,se.fit=TRUE)
-# 
-# guess_lat1 <- lm(data=spat_df,latitude~(longitude+time+altitude+bearing+speed)^2)
-# #step(guess_lat,direction='backward')
-# guess_lat <- lm(data=spat_df,latitude~sin(longitude+altitude+speed+bearing+time_long+longitude*speed))
-# #summary(guess_lat)
-# #predict(guess_lat,se.fit=TRUE)
-# 
-# guess_time1 <- lm(data=spat_df,time_long~(longitude+latitude+altitude+bearing+speed)^2)
-# #step(guess_time,direction='backward')
-# guess_time <- lm(data=spat_df,time_long~longitude+altitude+bearing+speed+day+longitude*altitude+altitude*speed+bearing*speed)
-# #summary(guess_time)
-# #predict(guess_time,se.fit=TRUE)
-# 
-# guess_day <- lm(data=spat_df,day~longitude+altitude+bearing+speed+latitude+time_long)
-```
+After removing unwanted data points and modeling the data using a "Kalman filter" to calculate our own speed values, we observe the opposite trend: that each increase in Farenheit is associated with a 0.01 unit *increase* in speed -- possibly indicating Wayne hurrying along when it's getting hotter.
+
+# Model Selection
+
+Before beginning to select a model, we must narrow our data to only those data points after the first 5 minutes of Wayne's travel:
 
 ```{r}
 df$longitude <- spat_df@coords[,1]
 df$latitude <- spat_df@coords[,2]
-df$session <- spat_df$session
-
-guess_long <- lm(data=df,longitude~latitude+time+day+session)
-#step(guess_long)
-
-guess_lat <- lm(data=df,latitude~longitude+time+day+session)
-#step(guess_lat)
-guess_lat <- lm(data=df,latitude~longitude+time)
-
-guess_time <- lm(data=df,time_long~longitude+day+latitude+session)
-#step(guess_time)
-guess_time <- lm(data=df[which(guess_time$residuals < (-4000000)),],time_long~longitude+day)
-
-#guess_day <- lm(data=spat_df,day~longitude+latitude+time+session)
-#step(guess_day)
-#guess_day <- lm(data=spat_df,day~longitude+latitude+time)
-#guess_day <- lm(data=spat_df[which(guess_day$residuals>0.5),],day~longitude+latitude+time)
+new_df <- data.frame()
+for (i in split(df,df$day)) {
+  for (j in 1:nrow(i)) {
+    if (i$time[j] > i[1,]$time + 300) { # First 5 minutes
+      new_df <- rbind(new_df,i[j,])
+    }
+  }
+}
+df <- new_df
 ```
 
-```{r}
-par(mfrow=c(1,3))
-plot(guess_long$fitted.values,guess_long$residuals)
-plot(guess_lat$fitted.values,guess_lat$residuals)
-plot(guess_time$fitted.values,guess_time$residuals)
-#plot(guess_day$fitted.values,guess_day$residuals)
-```
+This portion of the report will focus on selecting a model to predict values for Wayne's trips. It will predict three values necessary to plant a bomb: time, longitude, and latitude. 
+
+As predicting based on Kalman filter alone (dlm::dlmForecast) produced extremely biased predictions, I narrowed my model choices down to two basic forms: OLS regression (which assumes a linear relationship between variables, and attempts to minimize squared errors), and a generalized additive model (GAM), which is a generalized linear model that "smooths," or transforms, variables by applying a function to them. I begin by creating both models to explain longitude data (given latitude and time):
 
 ```{r}
-# errors <- bind_cols(long=as.vector(guess_long$residuals),lat=as.vector(guess_lat$residuals))
-# 
-# errors$comb <- abs(errors$long)+abs(errors$lat)
-# 
-# which(errors$comb==min(errors$comb))
-# 
-# df_test[4819,]
-# errors[4819,]
-# 
-# # Bomb 1: Monday, at 22:25:30 at long=-113.9922; lat=46.87254.
-# 
-# which(abs(errors$long)==min(abs(errors$long)))
-# which(abs(errors$lat)==min(abs(errors$lat)))
-# 
-# df_test[3599,]
-# df_test[1773,]
-# errors[3599,]
-# errors[1773,]
-# 
-# ggplot(df_test[2914,]) + 
-#   geom_point(aes(x=longitude,y=latitude)) + 
-#   geom_point(aes(x=pred_long,y=pred_lat),col='red')
-# 
-# ggplot(head(df_test),aes(x=latitude,y=pred_lat)) + 
-#   geom_point() + 
-#   geom_smooth() +
-#   geom_ribbon(aes(ymin=lat_lwr,ymax=lat_upr), alpha=0.3,col='red')
-```
+ols_long <- lm(data=df,longitude~latitude+time) # OLS
+ols_long_preds <- predict(ols_long)
+ols_long_resids <- df$longitude - ols_long_preds
 
-```{r}
+gam_long <- mgcv::gam(longitude~s(latitude)+s(time_long),data=df) # GAM
+gam_long_preds <- predict(gam_long)
+gam_long_resids <- df$longitude - gam_long_preds
+
 par(mfrow=c(1,2))
-ggplot(df) + geom_point(aes(x=altitude,y=longitude)) + geom_smooth(aes(x=altitude,y=longitude),method="lm")
-ggplot(df) + geom_point(aes(x=sin(altitude),y=longitude)) + geom_smooth(aes(x=sin(altitude),y=longitude),method="lm")
-plot(lm(data=df,longitude~altitude))
+plot(ols_long_preds,ols_long_resids)
+plot(gam_long_preds,gam_long_resids)
+```
+
+The OLS model (left) produces small errors at certain points, but wildly inaccurate guesses at other points. The GAM model (right) applies "smoothing" to latitude and time data, and thus creates a lot of data with modest amounts of error. While both models have some degree of accuracy, I end up choosing the GAM model because its errors appear to be consistently smaller:
+
+```{r}
+summary(ols_long_resids); summary(gam_long_resids)
+```
+
+The following code applies OLS and GAM models to the other variables -- latitude and time elapsed. 
+
+```{r}
+ols_lat <- lm(data=df,latitude~longitude+time) # OLS
+ols_lat_preds <- predict(ols_lat)
+ols_lat_resids <- df$latitude - ols_lat_preds
+
+gam_lat<- mgcv::gam(latitude~s(longitude)+s(time_long),data=df) # GAM
+gam_lat_preds <- predict(gam_lat)
+gam_lat_resids <- df$latitude - gam_lat_preds
+
+par(mfrow=c(1,2))
+plot(ols_lat_preds,ols_lat_resids)
+plot(gam_lat_preds,gam_lat_resids)
+
+summary(ols_lat_resids); summary(gam_lat_resids)
 ```
 
 ```{r}
-# predict_long <- predict(guess_long,interval='confidence')
-# predict_lat <- predict(guess_lat,interval='confidence')
-# predict_time <- predict(guess_time,interval='confidence')
-# 
-# full_test <- tibble(pred_long=predict_long[,1],long_lwr=predict_long[,2],long_upr=predict_long[,3],
-#                     pred_lat=predict_lat[,1],lat_lwr=predict_lat[,2],lat_upr=predict_lat[,3],
-#                     pred_time=predict_time[,1],time_lwr=predict_time[,2],time_upr=predict_time[,3])
-# 
-# df_test <- cbind(spat_df@data,full_test) %>% tibble()
-# 
-# ggplot(df_test,aes(x=longitude,y=pred_long)) + 
-#   geom_point() + 
-#   geom_smooth() + 
-#   geom_ribbon(aes(ymin=long_lwr,ymax=long_upr), alpha=0.3,col='red')
-# 
-# ggplot(head(df_test),aes(x=longitude,y=pred_long)) + 
-#   geom_point() + 
-#   geom_smooth() + 
-#   geom_ribbon(aes(ymin=long_lwr,ymax=long_upr), alpha=0.3,col='red')
-# 
-# ggplot(df_test,aes(x=latitude,y=pred_lat)) + 
-#   geom_point() + 
-#   geom_smooth() +
-#   geom_ribbon(aes(ymin=lat_lwr,ymax=lat_upr), alpha=0.3,col='red')
-# 
-# ggplot(head(df_test),aes(x=latitude,y=pred_lat)) + 
-#   geom_point() + 
-#   geom_smooth() +
-#   geom_ribbon(aes(ymin=lat_lwr,ymax=lat_upr), alpha=0.3,col='red')
-# 
-# ggplot(df_test,aes(x=time_long,y=pred_time)) + 
-#   geom_point() + 
-#   geom_ribbon(aes(ymin=time_lwr,ymax=time_upr), alpha=0.3,col='red')
-# 
-# init <- tibble(longitude=spat_df$longitude[!duplicated(spat_df$day)],latitude=spat_df$latitude[!duplicated(spat_df$day)],
-#                time_long=spat_df$time_long[!duplicated(spat_df$day)],
-#                altitude=spat_df$altitude[!duplicated(spat_df$day)],
-#                bearing=spat_df$bearing[!duplicated(spat_df$day)],speed=spat_df$speed[!duplicated(spat_df$day)],day=spat_df$day[!duplicated(spat_df$day)])      
-# 
-# predict(newdata=init,object=guess_long)
+ols_time <- lm(data=df,time_long~longitude+latitude) # OLS
+ols_time_preds <- predict(ols_time)
+ols_time_resids <- df$time_long - ols_time_preds
+
+gam_time <- mgcv::gam(time_long~s(longitude)+s(latitude),data=df) # GAM
+gam_time_preds <- predict(gam_time)
+gam_time_resids <- df$time_long - gam_time_preds
+
+par(mfrow=c(1,2))
+plot(ols_time_preds,ols_time_resids)
+plot(gam_time_preds,gam_time_resids)
+
+summary(ols_time_resids); summary(gam_time_resids)
+```
+
+Having created prediction algorithms, to select bomb locations, I choose the place where the prediction's error for longitude and latitude (their summed absolute value) is smallest. The prediction ends up performing best on 8/24 at 23:14:17, with a combined error of only 2.22 for UTM longitude and latitude. However, for this particular data, 7 days after 8/24 would correspond to 8/31, which isn't part of Week 3 -- so for Bomb 1 we'll choose the next best predicted value.
+
+```{r}
+errors <- bind_cols(long=as.vector(gam_long_resids),lat=as.vector(gam_lat_resids))
+
+errors$comb <- abs(errors$long)+abs(errors$lat)
+
+#which(errors$comb==min(errors$comb))
+#df[1862,]
+#errors[1862,]
+
+#which(errors$comb==sort(errors$comb)[2])
+#df[3255,]
+#errors[3255,]
+
+#which(errors$comb==sort(errors$comb)[3])
+#df[3330,]
+#errors[3330,]
+```
+
+# Bomb 1:
+
+```{r}
+paste("Longitude:",gam_long_preds[which(errors$comb==sort(errors$comb)[2])])
+paste("Latitude:",gam_lat_preds[which(errors$comb==sort(errors$comb)[2])])
+paste("UNIX Time:",(86400*7)+gam_time_preds[which(errors$comb==sort(errors$comb)[2])])
+plot(df$longitude,df$latitude)
+points(gam_long_preds[which(errors$comb==sort(errors$comb)[2])],
+       gam_lat_preds[which(errors$comb==sort(errors$comb)[2])],cex=5,pch=4,col='red')
 ```
 
 ```{r}
-training_indices <- sample(1:nrow(df),0.8*nrow(df))
-training <- df[training_indices,]
-testing <- df[-training_indices,]
-
+bomb1 <- df[which(errors$comb==sort(errors$comb)[2]),] %>% mutate(time = time+(86400*7)) 
+# Add constant to make this data point 7 days later.
+bomb1
+plot(df$longitude,df$latitude)
+points(df[which(errors$comb==sort(errors$comb)[2]),]$longitude,
+       df[which(errors$comb==sort(errors$comb)[2]),]$latitude,col='red',cex=5,pch=4)
 ```
 
-```{r function}
-make_pred <- function(df=spat_df) {
+For the data already given, Bomb 1 would be placed on 8/26 at the above UTM coordinates. Given we're predicting for Week 3, I add 7 days to the timestamp and we arrive at **9/2/20 at the above UTM coordinates.**
+
+# Bomb 2: 
+
+```{r}
+bomb2 <- df[which(errors$comb==sort(errors$comb)[3]),] %>% mutate(time = time+(86400*7))
+# Add constant to make this data point 7 days later.
+bomb2
+plot(df$longitude,df$latitude)
+points(df[which(errors$comb==sort(errors$comb)[3]),]$longitude,
+       df[which(errors$comb==sort(errors$comb)[3]),]$latitude,col='red',cex=5,pch=4)
+```
+
+For the data already given, Bomb 2 would be placed on 8/27 at the above UTM coordinates. Given we're predicting for Week 3, I add 7 days to the timestamp and we arrive at **9/3/20 at the above UTM coordinates.**
+
+# Model Using Week 3 Initial Points
+
+The data below imports files from the "test_gps" folder containing initial data points for each day in Week 3, and generates new predictions for bomb locations given additional information added to the GAM model.
+
+```{r}
+df <- data.frame()
+for (i in list.files("test_gps")) { 
+  setwd("~/inh2102_project2/test_gps")
+  dat <- read_json(i,flatten=TRUE)
+  time <- c()
+  time_long <- c()
+  accuracy <- c()
+  altitude <- c()
+  bearing <- c()
+  speed <- c()
+  longitude <- c()
+  latitude <- c()
+  for (i in dat[['features']]) {
+    time <- c(time,i$properties[1])
+    time_long <- c(time_long,i$properties[3])
+    accuracy <- c(accuracy,i$properties[4])
+    altitude <- c(altitude,i$properties[5])
+    bearing <- c(bearing,i$properties[6])
+    speed <- c(speed,i$properties[7])
+    longitude <- c(longitude,i$geometry[[2]][1])
+    latitude <- c(latitude,i$geometry[[2]][2])
+  }
+  altitude[sapply(altitude, is.null)] <- NA
+  bearing[sapply(bearing, is.null)] <- NA
+  speed[sapply(speed, is.null)] <- NA
   
+  df <- bind_rows(df,tibble(time=unlist(time),time_long=unlist(time_long),
+                  accuracy=unlist(accuracy),altitude=unlist(altitude),
+                  bearing=unlist(bearing),
+                speed=unlist(speed),longitude=unlist(longitude),
+               latitude=unlist(latitude))) %>% tibble()
+}
+```
+
+```{r}
+df$time <- paste0(substr(df$time,1,10)," ",substr(df$time,12,23))
+df$time <- as.POSIXct(df$time, "%Y-%m-%d %H:%M:%S",tz="GMT")
+df$day <- lubridate::day(df$time)
+df$hour <- lubridate::hour(df$time)
+
+spat_df <- SpatialPointsDataFrame(coords = df[, c("longitude", "latitude")],
+                             data = df["time"],
+                             proj4string=CRS("+proj=longlat +datum=WGS84")) 
+spat_df@data <- spat_df@data %>% 
+  mutate(time_long=df$time_long,accuracy=df$accuracy,altitude=df$altitude,
+         bearing=df$bearing,speed=df$speed,day=df$day,hour=df$hour) %>%
+  mutate(longitude=spat_df@coords[,1],latitude=spat_df@coords[,2])
+spat_df <- spTransform(spat_df,CRSobj = "+proj=utm +zone=12 +datum=WGS84")
+df$longitude <- coordinates(spat_df)[,1]
+df$latitude <- coordinates(spat_df)[,2]
+```
+
+```{r}
+errors <- bind_cols(long=as.vector(init_long_resids),lat=as.vector(init_lat_resids))
+
+errors$comb <- abs(errors$long)+abs(errors$lat)
+```
+
+# Bomb 1:
+
+```{r}
+bomb1 <- df[which(errors$comb==min(errors$comb)),] 
+bomb1
+plot(df$longitude,df$latitude)
+points(df[which(errors$comb==sort(errors$comb)[2]),]$longitude,
+       df[which(errors$comb==sort(errors$comb)[2]),]$latitude,col='red',cex=5,pch=4)
+```
+
+# Bomb 2: 
+
+```{r}
+bomb2 <- df[which(errors$comb==sort(errors$comb)[2]),]
+bomb2
+```
+
+The following function 
+
+```{r}
+make_pred <- function(folder_name) {
+  setwd(paste0("~/inh2102_project2/"))
+  df <- data.frame()
+for (i in list.files(folder_name)) { 
+  setwd(paste0("~/inh2102_project2/",folder_name)) 
+  dat <- read_json(i,flatten=TRUE)
+  time <- c()
+  time_long <- c()
+  accuracy <- c()
+  altitude <- c()
+  bearing <- c()
+  speed <- c()
+  longitude <- c()
+  latitude <- c()
+  for (i in dat[['features']]) {
+    time <- c(time,i$properties[1])
+    time_long <- c(time_long,i$properties[3])
+    accuracy <- c(accuracy,i$properties[4])
+    altitude <- c(altitude,i$properties[5])
+    bearing <- c(bearing,i$properties[6])
+    speed <- c(speed,i$properties[7])
+    longitude <- c(longitude,i$geometry[[2]][1])
+    latitude <- c(latitude,i$geometry[[2]][2])
+  }
+  altitude[sapply(altitude, is.null)] <- NA
+  bearing[sapply(bearing, is.null)] <- NA
+  speed[sapply(speed, is.null)] <- NA
+  
+  df <- bind_rows(df,tibble(time=unlist(time),time_long=unlist(time_long),
+                  accuracy=unlist(accuracy),altitude=unlist(altitude),
+                  bearing=unlist(bearing),
+                speed=unlist(speed),longitude=unlist(longitude),
+               latitude=unlist(latitude))) %>% tibble()
+}
+df$time <- paste0(substr(df$time,1,10)," ",substr(df$time,12,23))
+df$time <- as.POSIXct(df$time, "%Y-%m-%d %H:%M:%S",tz="GMT")
+df$day <- lubridate::day(df$time)
+df$hour <- lubridate::hour(df$time)
+
+spat_df <- SpatialPointsDataFrame(coords = df[, c("longitude", "latitude")],
+                             data = df["time"],
+                             proj4string=CRS("+proj=longlat +datum=WGS84")) 
+spat_df@data <- spat_df@data %>% 
+  mutate(time_long=df$time_long,accuracy=df$accuracy,altitude=df$altitude,
+         bearing=df$bearing,speed=df$speed,day=df$day,hour=df$hour) %>%
+  mutate(longitude=spat_df@coords[,1],latitude=spat_df@coords[,2])
+spat_df <- spTransform(spat_df,CRSobj = "+proj=utm +zone=12 +datum=WGS84")
+df$longitude <- coordinates(spat_df)[,1]
+df$latitude <- coordinates(spat_df)[,2]
+diff_df <- df %>% arrange(-desc(time))
+diff <- c()
+for (i in 1:length(df$time)) {
+  diff[i] = difftime(df$time[i], df$time[i-1], units="secs")
+}
+diff <- diff[!is.na(diff)]
+session_indices <- which(diff>=120)
+spat_df$diff[2:nrow(spat_df)] <- diff
+gam_long <- mgcv::gam(longitude~s(latitude)+s(time_long),data=df) # GAM
+gam_long_preds <- predict(gam_long)
+gam_long_resids <- df$longitude - gam_long_preds
+gam_lat<- mgcv::gam(latitude~s(longitude)+s(time_long),data=df) # GAM
+gam_lat_preds <- predict(gam_lat)
+gam_lat_resids <- df$latitude - gam_lat_preds
+gam_time <- mgcv::gam(time_long~s(longitude)+s(latitude),data=df) # GAM
+gam_time_preds <- predict(gam_time)
+gam_time_resids <- df$time_long - gam_time_preds
+errors <- bind_cols(long=as.vector(gam_long_resids),lat=as.vector(gam_lat_resids))
+errors$comb <- abs(errors$long)+abs(errors$lat)
+bomb1 <- df[which(errors$comb==min(errors$comb)),] 
+bomb2 <- df[which(errors$comb==sort(errors$comb)[2]),]
+return(rbind(bomb1,bomb2))
 }
 ```
