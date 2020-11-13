@@ -361,6 +361,37 @@ plot(gam_lat_preds,gam_lat_resids)
 summary(ols_lat_resids); summary(gam_lat_resids)
 ```
 
+After modeling longitude and latitude, I create visualizations to understand what the model is doing.
+
+The following graph shows GAM model estimates and real longitude/latitude data for Week1/Week2.
+
+```{r,warning=FALSE}
+ggplot() + 
+  geom_point(aes(x=df$longitude,y=df$latitude,col='blue')) + 
+  geom_point(aes(x=gam_long_preds,y=gam_lat_preds,col='red')) + 
+  scale_color_discrete(name="",
+                       labels=c("real","gam predictions"),
+                       breaks=c("blue","red"))
+```
+
+The following graph shows the GAM model's estimates for longitude/latitude, and in red lines plots our uncertainties about the model's predictions. To be precise, the red lines are ~95% credible intervals = estimate +/- 2*SE (as recommended by the mgcv package).
+
+```{r,warning=FALSE}
+long_se <- predict(gam_long,se.fit=T)$se
+long_lwr <- predict(gam_long) - (2*long_se)
+long_upr <- predict(gam_long) + (2*long_se)
+
+lat_se <- predict(gam_lat,se.fit=T)$se
+lat_lwr <- predict(gam_lat) - (2*lat_se)
+lat_upr <- predict(gam_lat) + (2*lat_se)
+
+ggplot() + 
+  geom_point(aes(x=gam_long_preds,y=gam_lat_preds)) + 
+  geom_smooth(method='gam',mapping=aes(x=gam_long_preds,y=gam_lat_preds)) + 
+  geom_smooth(col='red',aes(x=long_lwr,y=lat_lwr)) + 
+  geom_smooth(col='red',aes(x=long_upr,y=lat_upr))
+```
+
 ```{r,warning=FALSE}
 ols_time <- lm(data=df,time_long~longitude+latitude) # OLS
 ols_time_preds <- predict(ols_time)
@@ -632,5 +663,4 @@ make_pred('gps')
 
 # Conclusion
 
-This report describes my attempt to bomb Wayne and uses two weeks of GPS data to 
-
+This report describes my attempt to bomb Wayne and uses two weeks of GPS data to predict time and location for the third week. It's important to note that before beginning to build a set model, this report examined and attempted to correct elements of the two weeks of data. I identified unwanted data points -- whether that was stationary activity that needed to be removed, or data with coordinates nowhere near the normal work to home route -- and organized the data into "sessions" of activity. Before actually creating a prediction model, I explored the possible impact of weather on Wayne's walking speed, and used a special "dynamic linear model" to do so -- concluding that after removing data, there was a significant relationship between temperature and speed. I then compared the performance of two model structures -- OLS and GAM -- and selected the GAM model to predict longitude, latitude, and time. Importantly, I described the uncertainties of the model before designating bomb times/locations, repeating the process for Week 3 initial points, and creating a function to run the model on Week 3 or any other data. 
