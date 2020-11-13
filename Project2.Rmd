@@ -1,7 +1,7 @@
 ---
 title: "Project 2"
 author: "Isaac Horwitz (inh2102)"
-date: "10/31/2020"
+date: "11/13/2020"
 output: pdf_document
 urlcolor: blue
 ---
@@ -85,7 +85,7 @@ spat_df@data <- spat_df@data %>%
 spat_df <- spTransform(spat_df,CRSobj = "+proj=utm +zone=12 +datum=WGS84")
 ```
 
-This is what the raw data looks like, with longitude on the X axis, latitude on the Y axis, and colors according to each day for which the raw data is labeled (assuming the default timezone GMT).
+This is what the raw data looks like, with longitude on the X axis, latitude on the Y axis, and colors according to each day for which the raw data is labeled (assuming the default timezone GMT):
 
 ```{r}
 plot(spat_df$longitude,spat_df$latitude,col=factor(spat_df$day))
@@ -110,7 +110,7 @@ for (i in split(spat_df,spat_df$day)) {
 Here are some preliminary thoughts:
 
 - Some of the days have more data points than others. Aug. 18 only has 90 data points, and thus appears much more sparse than the other days -- for example, the maximum is 712 data points on day Aug 27.
-- The path for each day is roughly the same -- meaning we don't have to deal with expressing probabilities for where Wayne will go or where he will leave from. The origin and destination is constant.
+- The path for each day is roughly the same -- meaning we don't have to deal with expressing probabilities for where Wayne will go or where he will leave from. The origin and destination are constant.
 - We will certainly have to deal with the problem of data inaccuracies, including suspected missing data (for example, that is evident on Aug. 22), as well as extra junk data we'll look at more closely on Aug. 31.
 
 # Exploring Trends
@@ -134,7 +134,7 @@ ggplot(time,aes(x=time,y=temperature)) +
   geom_smooth()
 ```
 
-Using a locally fitted smoother (with grey bands representing SE, or uncertainty), we can see that there are fluctuations in temperature over the time period -- it rises (during the morning) and drops at night, but over the entire time period, it goes down (as Montana transitions out of the summer).
+Using a locally fitted smoother (with grey bands representing SE, or uncertainty), we can see that there are fluctuations in temperature over the time period -- it rises (during the morning) and drops (at night), but over the entire time period, it generally decreases (as Montana transitions out of the summer).
 
 We can also quickly visualize whether there is an association between the given "speed" data (much of which is NA) and the temperature data: 
 
@@ -148,7 +148,7 @@ summary(speed_lm)
 
 Note: as the speed data given is likely flawed, we will not here attempt to create a perfect regression model and control for the model performing better at certain values. Regardless, we can see that there is on average a modest but likely significant relationship between speed and temperature -- and on average, speed decreases by 0.03 units (possibly m/s, but not given in the data) for each increase in Farenheit temperature.
 
-It's probably worthwhile calculating our own speed given the coordinates and timestamps, but first we need to understand some properties of the data, including how frequent each data point is, and how the data can be divided into periods of collection and non-collection (stationary, or lack of movement by Wayne).
+It is worthwhile to calculate our own speed given the coordinates and timestamps, but first we need to understand some properties of the data, including how frequent each data point is, and how the data can be divided into periods of collection and non-collection (stationary, or lack of movement by Wayne).
 
 The following code chunk examines the amount of time between each (chronologically sorted) data point to get a sense of collection frequency:
 
@@ -176,7 +176,10 @@ Again, this tells us that the data is very noisy and imperfect -- and thus we ca
 plot(df$time,spat_df$longitude,col=df$day)
 abline(v=df$time[session_indices],col="red")
 ```
+
 The plot above presents each day in a different color, and each red line indicates the beginning of a "session." We can begin to notice that a session begins when Wayne leaves his home and ends when he is at work, and then another session begins when he leaves work for home. This is true for all data except two days: **Aug. 26** and **Aug. 31**, both of which have multiple sessions due to extraneous or missing data. 
+
+# Data Cleaning: Aug. 31
 
 ```{r}
 aug31 <- spat_df[df$time>"2020-08-31 00:00:00 GMT",]
@@ -195,6 +198,8 @@ plot(aug31$time,aug31$longitude)
 abline(v=aug31$time[aug31$diff>120],col="red")
 ```
 
+# Data Cleaning: Aug. 26
+
 ```{r}
 aug26 <- spat_df[spat_df$time>"2020-08-26 00:00:00 GMT"&spat_df$time<"2020-08-27 00:00:00 GMT",]
 plot(aug26$time,aug26$longitude)
@@ -211,6 +216,7 @@ aug26 <- spat_df[spat_df$time>"2020-08-26 00:00:00 GMT"&spat_df$time<"2020-08-27
 plot(aug26$time,aug26$longitude)
 abline(v=aug26$time[aug26$diff>120],col="red")
 ```
+
 For visualization purposes, I hand-code each session as either 0 (home location to work location) or 1 (work location to home location).
 
 ```{r}
@@ -243,7 +249,7 @@ points(spat_df[spat_df$session==1,]$longitude,spat_df[spat_df$session==1,]$latit
 
 In blue are the data points for the commute to work, and mirroring them are the red data points representing travel from work to home.
 
-Having examined the period between individual data points, defined "sessions" of activity, and removed sessions containing unwanted data, we can now get a better picture of the speed between the data points we're interested in. For this, we'll construct a DLM (dynamic linear model) -- also known as a "Kalman filter," which uses uses what we know about our longitudinal data to create model our data by leveraging information we know about its uncertainties -- even produced a "smoothed" version that attempts to refine estimates.
+Having examined the period between individual data points, defined "sessions" of activity, and removed sessions containing unwanted data, we can now get a better picture of the speed between the data points we're interested in. For this, we'll construct a DLM (dynamic linear model) -- also known as a "Kalman filter," which uses uses what we know about our longitudinal data and its uncertainties to create refined time and position estimates.
 
 ```{r}
 td <- as.numeric(diff(df$time), units="secs")
@@ -286,17 +292,18 @@ speed <- sqrt(dlm_smooth_mod$s[, 3]^2+dlm_smooth_mod$s[, 4]^2)
 
 ```{r}
 time$kalman_speed <- speed[2:length(speed)]
-ggplot(time) + 
+time <- time[time$kalman_speed<10,] # Removing unrealistic speeds
+ggplot(time) +  
   geom_point(aes(x=temperature,y=kalman_speed)) +
   geom_smooth(aes(x=temperature,y=kalman_speed),method='lm')
 summary(lm(data=time,kalman_speed~temperature))
 ```
 
-After removing unwanted data points and modeling the data using a "Kalman filter" to calculate our own speed values, we observe the opposite trend: that each increase in Farenheit is associated with a 0.01 unit *increase* in speed -- possibly indicating Wayne hurrying along when it's getting hotter.
+After removing unwanted data points and modeling the data using a "Kalman filter" to calculate our own speed values, we observe the opposite trend: that each increase in Farenheit is associated with a 0.01 unit *increase* in speed -- possibly indicating Wayne hurried along when it was getting hotter.
 
 # Model Selection
 
-Before beginning to select a model, we must narrow our data to only those data points after the first 5 minutes of Wayne's travel:
+Before beginning to select a bomb prediction model, we must narrow our data to only those data points after the first 5 minutes of Wayne's travel:
 
 ```{r, warning=FALSE}
 df$longitude <- spat_df@coords[,1]
@@ -316,7 +323,7 @@ This portion of the report will focus on selecting a model to predict values for
 
 As predicting based on Kalman filter alone (dlm::dlmForecast) produced extremely biased predictions, I narrowed my model choices down to two basic forms: OLS regression (which assumes a linear relationship between variables, and attempts to minimize squared errors), and a generalized additive model (GAM), which is a generalized linear model that "smooths," or transforms, variables by applying a function to them. I begin by creating both models to explain longitude data (given latitude and time):
 
-```{r}
+```{r,warning=FALSE}
 ols_long <- lm(data=df,longitude~latitude+time) # OLS
 ols_long_preds <- predict(ols_long)
 ols_long_resids <- df$longitude - ols_long_preds
@@ -332,13 +339,13 @@ plot(gam_long_preds,gam_long_resids)
 
 The OLS model (left) produces small errors at certain points, but wildly inaccurate guesses at other points. The GAM model (right) applies "smoothing" to latitude and time data, and thus creates a lot of data with modest amounts of error. While both models have some degree of accuracy, I end up choosing the GAM model because its errors appear to be consistently smaller:
 
-```{r}
+```{r,warning=FALSE}
 summary(ols_long_resids); summary(gam_long_resids)
 ```
 
 The following code applies OLS and GAM models to the other variables -- latitude and time elapsed. 
 
-```{r}
+```{r,warning=FALSE}
 ols_lat <- lm(data=df,latitude~longitude+time) # OLS
 ols_lat_preds <- predict(ols_lat)
 ols_lat_resids <- df$latitude - ols_lat_preds
@@ -354,7 +361,7 @@ plot(gam_lat_preds,gam_lat_resids)
 summary(ols_lat_resids); summary(gam_lat_resids)
 ```
 
-```{r}
+```{r,warning=FALSE}
 ols_time <- lm(data=df,time_long~longitude+latitude) # OLS
 ols_time_preds <- predict(ols_time)
 ols_time_resids <- df$time_long - ols_time_preds
@@ -370,7 +377,7 @@ plot(gam_time_preds,gam_time_resids)
 summary(ols_time_resids); summary(gam_time_resids)
 ```
 
-Having created prediction algorithms, to select bomb locations, I choose the place where the prediction's error for longitude and latitude (their summed absolute value) is smallest. The prediction ends up performing best on 8/24 at 23:14:17, with a combined error of only 2.22 for UTM longitude and latitude. However, for this particular data, 7 days after 8/24 would correspond to 8/31, which isn't part of Week 3 -- so for Bomb 1 we'll choose the next best predicted value.
+Having created prediction algorithms, to select bomb locations, I choose the place where the prediction's error for longitude and latitude (their summed absolute value, to be precise) is smallest.
 
 ```{r, warning=FALSE}
 errors <- bind_cols(long=as.vector(gam_long_resids),lat=as.vector(gam_lat_resids))
@@ -392,35 +399,37 @@ errors$comb <- abs(errors$long)+abs(errors$lat)
 
 # Bomb 1:
 
-```{r}
-paste("Longitude:",gam_long_preds[which(errors$comb==min(errors$comb))])
-paste("Latitude:",gam_lat_preds[which(errors$comb==min(errors$comb))])
-paste("UNIX Time:",(86400*7)+gam_time_preds[which(errors$comb==min(errors$comb))])
-plot(df$longitude,df$latitude)
+Bomb one will be placed at the following location and time:
+
+```{r,warning=FALSE}
+paste("UTM Longitude:",gam_long_preds[which(errors$comb==min(errors$comb))])
+paste("UTM Latitude:",gam_lat_preds[which(errors$comb==min(errors$comb))])
+paste("UNIX Time:",(86400*7)+
+        gam_time_preds[which(errors$comb==min(errors$comb))]) # Adding 7 days
+plot(cex=0.1,df$longitude,df$latitude,main="BOMB ONE")
 points(gam_long_preds[which(errors$comb==min(errors$comb))],
        gam_lat_preds[which(errors$comb==min(errors$comb))],cex=5,pch=4,col='red')
 ```
 
-For the data already given, Bomb 1 would be placed on 8/26 at the above UTM coordinates. Given we're predicting for Week 3, I add 7 days to the timestamp and we arrive at **9/2/20 at the above UTM coordinates.**
-
 # Bomb 2: 
 
-```{r}
-paste("Longitude:",gam_long_preds[which(errors$comb==sort(errors$comb)[3])])
-paste("Latitude:",gam_lat_preds[which(errors$comb==sort(errors$comb)[3])])
-paste("UNIX Time:",(86400*7)+gam_time_preds[which(errors$comb==sort(errors$comb)[3])])
-plot(cex=0.1,df$longitude,df$latitude)
+Bomb two will be placed at the following location and time:
+
+```{r,warning=FALSE}
+paste("UTM Longitude:",gam_long_preds[which(errors$comb==sort(errors$comb)[3])])
+paste("UTM Latitude:",gam_lat_preds[which(errors$comb==sort(errors$comb)[3])])
+paste("UNIX Time:",(86400*7)+
+        gam_time_preds[which(errors$comb==sort(errors$comb)[3])]) # Adding 7 days
+plot(cex=0.1,df$longitude,df$latitude,main="BOMB TWO")
 points(gam_long_preds[which(errors$comb==sort(errors$comb)[3])],
        gam_lat_preds[which(errors$comb==sort(errors$comb)[3])],cex=5,pch=4,col='red')
 ```
 
-For the data already given, Bomb 2 would be placed on 8/27 at the above UTM coordinates. Given we're predicting for Week 3, I add 7 days to the timestamp and we arrive at **9/3/20 at the above UTM coordinates.**
-
-# Model Using Week 3 Initial Points
+# Applying Model Using Week 3 Initial Points
 
 The data below imports files from the "test_gps" folder containing initial data points for each day in Week 3, and generates new predictions for bomb locations given additional information added to the GAM model.
 
-```{r}
+```{r,warning=FALSE}
 df <- data.frame()
 for (i in list.files("test_gps")) { 
   setwd("~/inh2102_project2/test_gps")
@@ -471,9 +480,32 @@ spat_df@data <- spat_df@data %>%
 spat_df <- spTransform(spat_df,CRSobj = "+proj=utm +zone=12 +datum=WGS84")
 df$longitude <- coordinates(spat_df)[,1]
 df$latitude <- coordinates(spat_df)[,2]
+new_df <- data.frame()
+for (i in split(df,df$day)) {
+  for (j in 1:nrow(i)) {
+    if (i$time[j] > i[1,]$time + 300) { # First 5 minutes
+      new_df <- rbind(new_df,i[j,])
+    }
+  }
+}
+df <- new_df
 ```
 
-```{r}
+```{r,warning=FALSE}
+init_long <- mgcv::gam(longitude~s(latitude,k=1)+s(time_long,k=1),data=df) # GAM
+init_long_preds <- predict(init_long)
+init_long_resids <- df$longitude - init_long_preds
+
+init_lat <- mgcv::gam(latitude~s(longitude,k=1)+s(time_long,k=1),data=df) # GAM
+init_lat_preds <- predict(init_lat)
+init_lat_resids <- df$latitude - init_lat_preds
+
+init_time <- mgcv::gam(time_long~s(longitude,k=1)+s(latitude,k=1),data=df) # GAM
+init_time_preds <- predict(init_time)
+init_time_resids <- df$time_long - init_time_preds
+```
+
+```{r,warning=FALSE}
 errors <- bind_cols(long=as.vector(init_long_resids),lat=as.vector(init_lat_resids))
 
 errors$comb <- abs(errors$long)+abs(errors$lat)
@@ -482,28 +514,33 @@ errors$comb <- abs(errors$long)+abs(errors$lat)
 # Bomb 1:
 
 ```{r}
-bomb1 <- df[which(errors$comb==min(errors$comb)),] 
-bomb1
-plot(df$longitude,df$latitude)
-points(df[which(errors$comb==sort(errors$comb)[2]),]$longitude,
-       df[which(errors$comb==sort(errors$comb)[2]),]$latitude,col='red',cex=5,pch=4)
+paste("UTM Longitude:",init_long_preds[which(errors$comb==min(errors$comb))])
+paste("UTM Latitude:",init_lat_preds[which(errors$comb==min(errors$comb))])
+paste("UNIX Time:",init_time_preds[which(errors$comb==min(errors$comb))])
+plot(cex=0.1,df$longitude,df$latitude,main="BOMB ONE")
+points(init_long_preds[which(errors$comb==min(errors$comb))],
+       init_lat_preds[which(errors$comb==min(errors$comb))],cex=5,pch=4,col='red')
 ```
 
 # Bomb 2: 
 
 ```{r}
-bomb2 <- df[which(errors$comb==sort(errors$comb)[2]),]
-bomb2
+paste("UTM Longitude:",init_long_preds[which(errors$comb==sort(errors$comb)[2])])
+paste("UTM Latitude:",init_lat_preds[which(errors$comb==sort(errors$comb)[2])])
+paste("UNIX Time:",init_time_preds[which(errors$comb==sort(errors$comb)[2])])
+plot(cex=0.1,df$longitude,df$latitude,main="BOMB TWO")
+points(init_long_preds[which(errors$comb==sort(errors$comb)[2])],
+       init_lat_preds[which(errors$comb==sort(errors$comb)[2])],cex=5,pch=4,col='red')
 ```
 
-The following function 
+The following function allows the user to input the name of a folder containing geojson folders and obtain my bomb predictions.
 
-```{r}
+```{r,warning=FALSE}
 make_pred <- function(folder_name) {
-  setwd(paste0("~/inh2102_project2/"))
+  setwd(paste0("~/inh2102_project2/",folder_name))
   df <- data.frame()
-for (i in list.files(folder_name)) { 
-  setwd(paste0("~/inh2102_project2/",folder_name)) 
+for (i in list.files(getwd())) { 
+  setwd(paste0("~/inh2102_project2/",folder_name))
   dat <- read_json(i,flatten=TRUE)
   time <- c()
   time_long <- c()
@@ -533,6 +570,7 @@ for (i in list.files(folder_name)) {
                 speed=unlist(speed),longitude=unlist(longitude),
                latitude=unlist(latitude))) %>% tibble()
 }
+
 df$time <- paste0(substr(df$time,1,10)," ",substr(df$time,12,23))
 df$time <- as.POSIXct(df$time, "%Y-%m-%d %H:%M:%S",tz="GMT")
 df$day <- lubridate::day(df$time)
@@ -548,27 +586,51 @@ spat_df@data <- spat_df@data %>%
 spat_df <- spTransform(spat_df,CRSobj = "+proj=utm +zone=12 +datum=WGS84")
 df$longitude <- coordinates(spat_df)[,1]
 df$latitude <- coordinates(spat_df)[,2]
-diff_df <- df %>% arrange(-desc(time))
-diff <- c()
-for (i in 1:length(df$time)) {
-  diff[i] = difftime(df$time[i], df$time[i-1], units="secs")
+new_df <- data.frame()
+for (i in split(df,df$day)) {
+  for (j in 1:nrow(i)) {
+    if (i$time[j] > i[1,]$time + 300) { # First 5 minutes
+      new_df <- rbind(new_df,i[j,])
+    }
+  }
 }
-diff <- diff[!is.na(diff)]
-session_indices <- which(diff>=120)
-spat_df$diff[2:nrow(spat_df)] <- diff
-gam_long <- mgcv::gam(longitude~s(latitude)+s(time_long),data=df) # GAM
-gam_long_preds <- predict(gam_long)
-gam_long_resids <- df$longitude - gam_long_preds
-gam_lat<- mgcv::gam(latitude~s(longitude)+s(time_long),data=df) # GAM
-gam_lat_preds <- predict(gam_lat)
-gam_lat_resids <- df$latitude - gam_lat_preds
-gam_time <- mgcv::gam(time_long~s(longitude)+s(latitude),data=df) # GAM
-gam_time_preds <- predict(gam_time)
-gam_time_resids <- df$time_long - gam_time_preds
-errors <- bind_cols(long=as.vector(gam_long_resids),lat=as.vector(gam_lat_resids))
+df <- new_df
+
+init_long <- mgcv::gam(longitude~s(latitude,k=1)+s(time_long,k=1),data=df) # GAM
+init_long_preds <- predict(init_long)
+init_long_resids <- df$longitude - init_long_preds
+
+init_lat <- mgcv::gam(latitude~s(longitude,k=1)+s(time_long,k=1),data=df) # GAM
+init_lat_preds <- predict(init_lat)
+init_lat_resids <- df$latitude - init_lat_preds
+
+init_time <- mgcv::gam(time_long~s(longitude,k=1)+s(latitude,k=1),data=df) # GAM
+init_time_preds <- predict(init_time)
+init_time_resids <- df$time_long - init_time_preds
+
+errors <- bind_cols(long=as.vector(init_long_resids),lat=as.vector(init_lat_resids))
+
 errors$comb <- abs(errors$long)+abs(errors$lat)
-bomb1 <- df[which(errors$comb==min(errors$comb)),] 
-bomb2 <- df[which(errors$comb==sort(errors$comb)[2]),]
-return(rbind(bomb1,bomb2))
+
+print(paste("BOMB1 UTM Longitude:",init_long_preds[which(errors$comb==min(errors$comb))]))
+print(paste("BOMB1 UTM Latitude:",init_lat_preds[which(errors$comb==min(errors$comb))]))
+print(paste("BOMB1 UNIX Time:",init_time_preds[which(errors$comb==min(errors$comb))]))
+
+print(paste("BOMB2 UTM Longitude:",init_long_preds[which(errors$comb==sort(errors$comb)[2])]))
+print(paste("BOMB2 UTM Latitude:",init_lat_preds[which(errors$comb==sort(errors$comb)[2])]))
+print(paste("BOMB2 UNIX Time:",init_time_preds[which(errors$comb==sort(errors$comb)[2])]))
 }
 ```
+
+# Example Input
+
+This input replicates bomb locations based on Week1/Week2 data:
+
+```{r,warning=FALSE}
+make_pred('gps')
+```
+
+# Conclusion
+
+This report describes my attempt to bomb Wayne and uses two weeks of GPS data to 
+
