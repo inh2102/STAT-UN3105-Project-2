@@ -175,13 +175,17 @@ Again, this tells us that the data is very noisy and imperfect -- and thus we ca
 plot(df$time,spat_df$longitude,col=df$day)
 abline(v=df$time[session_indices],col="red")
 ```
-The plot above presents each day in a different color, and each red line indicates the beginning of a "session." We can begin to notice that a session begins when Wayne leaves his home and ends when he is at work, and then another session begins when he leaves work for home. This is true for all data except two days: Aug. 26 and Aug. 31, both of which have multiple sessions due to extraneous or missing data. 
+The plot above presents each day in a different color, and each red line indicates the beginning of a "session." We can begin to notice that a session begins when Wayne leaves his home and ends when he is at work, and then another session begins when he leaves work for home. This is true for all data except two days: **Aug. 26** and **Aug. 31**, both of which have multiple sessions due to extraneous or missing data. 
 
 ```{r}
 aug31 <- spat_df[df$time>"2020-08-31 00:00:00 GMT",]
 plot(aug31$time,aug31$longitude)
 abline(v=aug31$time[aug31$diff>120],col="red")
+```
 
+Aug. 31 has extra data when Wayne is stationary (at work), so we need to move this since we're prohibited from bombing him when he's sheltered.
+
+```{r}
 df <- df[-c(5352:5528),]
 spat_df <- spat_df[-c(5352:5528),]
 aug31 <- spat_df[spat_df$time>"2020-08-31 00:00:00 GMT",]
@@ -193,13 +197,50 @@ abline(v=aug31$time[aug31$diff>120],col="red")
 aug26 <- spat_df[spat_df$time>"2020-08-26 00:00:00 GMT"&spat_df$time<"2020-08-27 00:00:00 GMT",]
 plot(aug26$time,aug26$longitude)
 abline(v=aug26$time[aug26$diff>120],col="red")
+```
 
+Aug. 26 contains data where Wayne goes somewhere in the complete opposition direction of his work or home -- and thus including this data will bias all of our estimates when we have no reason to suspect he will re-visit this location. We remove these data points/this session altogether:
+
+```{r}
 df <- df[-c(3534:3620),]
 spat_df <- spat_df[-c(3534:3620),]
 aug26 <- spat_df[spat_df$time>"2020-08-26 00:00:00 GMT"&spat_df$time<"2020-08-27 00:00:00 GMT",]
 plot(aug26$time,aug26$longitude)
 abline(v=aug26$time[aug26$diff>120],col="red")
 ```
+For visualization purposes, I hand-code each session as either 0 (home location to work location) or 1 (work location to home location).
+
+```{r}
+spat_df$session <- rep(NA,nrow(spat_df@data))
+spat_df$session[1:80] <- 0
+spat_df$session[81:90] <- 1
+spat_df$session[91:213] <- 0
+spat_df$session[214:339] <- 1
+spat_df$session[340:564] <- 0
+spat_df$session[565:693] <- 1
+spat_df$session[694:1021] <- 0
+spat_df$session[1022:1360] <- 1
+spat_df$session[1361:1722] <- 0
+spat_df$session[1723:2044] <- 1
+spat_df$session[2045:2403] <- 0
+spat_df$session[2404:2755] <- 1
+spat_df$session[2756:3117] <- 0
+spat_df$session[3118:3533] <- 1
+spat_df$session[3534:3896] <- 0
+spat_df$session[3897:4245] <- 1
+spat_df$session[4246:4512] <- 0
+spat_df$session[4513:4573] <- 1
+spat_df$session[4574:4903] <- 0
+spat_df$session[4904:5264] <- 1
+spat_df$session[5265:5593] <- 0
+
+plot(spat_df[spat_df$session==0,]$longitude,spat_df[spat_df$session==0,]$latitude,col='blue')
+points(spat_df[spat_df$session==1,]$longitude,spat_df[spat_df$session==1,]$latitude,col='red')
+```
+
+In blue are the data points for the commute to work, and mirroring them are the red data points representing travel from work to home.
+
+Having examined the period between individual data points, defined "sessions" of activity, and removed sessions containing unwanted data, we can now get a better picture of the speed between the data points we're interested in. For this, we'll construct
 
 ```{r}
 td <- as.numeric(diff(df$time), units="secs")
@@ -217,7 +258,7 @@ dlm_smooth_mod <-dlmSmooth(dlm_filter_mod)
 ```
 
 ```{r}
-plot(cbind(coordinates[1:100, ], dlm_filter_mod$m[2:101, 1:2], dlm_smooth_mod$s[2:101,1:2]),
+plot(cbind(coordinates[1:nrow(coordinates), ], dlm_filter_mod$m[2:nrow(dlm_filter_mod$m), 1:2], dlm_smooth_mod$s[2:nrow(dlm_smooth_mod$s),1:2]),
      type='p', col =c("black", "red", "blue"), xlab="UTM X", ylab="UTM Y")
 legend("topright", col =c("black", "red", "blue"),pch = 1, 
        legend =c("raw", "kalman filter","kalman smoother"))
@@ -233,31 +274,6 @@ ggplot(time) +
   geom_point(aes(x=temperature,y=kalman_speed)) +
   geom_smooth(aes(x=temperature,y=kalman_speed),method='lm')
 summary(lm(data=time,kalman_speed~temperature))
-```
-
-```{r}
-spat_df$session <- rep(NA,nrow(spat_df@data))
-spat_df$session[1:80] <- 0
-spat_df$session[81:90] <- 1
-spat_df$session[91:213] <- 0
-spat_df$session[214:339] <- 1
-spat_df$session[340:564] <- 0
-spat_df$session[565:693] <- 1
-spat_df$session[694:1021] <- 0
-spat_df$session[1022:1360] <- 1
-spat_df$session[1361:1722] <- 0
-spat_df$session[1723:2044] <- 1
-spat_df$session[2045:2403] <- 0
-spat_df$session[2404:2755] <- 1
-spat_df$session[2756:3118] <- 0
-spat_df$session[3119:3467] <- 1
-spat_df$session[3468:3734] <- 0
-spat_df$session[3735:3795] <- 1
-spat_df$session[3796:4125] <- 0
-spat_df$session[4126:4486] <- 1
-spat_df$session[4487:4815] <- 0
-plot(spat_df[spat_df$session==0,]$longitude,spat_df[spat_df$session==0,]$latitude,col='blue')
-points(spat_df[spat_df$session==1,]$longitude,spat_df[spat_df$session==1,]$latitude,col='red')
 ```
 
 ```{r}
